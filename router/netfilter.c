@@ -10,6 +10,7 @@
 #include <linux/udp.h>
 
 #include <net/ip.h>
+#include <net/tcp.h>
 
 #define MAGIC 0xdeadbeef
 
@@ -29,18 +30,21 @@ uint16_t sport, dport;
 uint32_t orig_ip = 0;
 uint32_t new_ip = 0;
 
-
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,13,0)
 unsigned int hook_func(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
-//unsigned int hook_func(unsigned int hooknum,
-//                       struct sk_buff **skb,
-//                      const struct net_device *in,
-//                       const struct net_device *out,
-//                      int (*okfn)(struct sk_buff *)) 
+#else
+unsigned int hook_func(unsigned int hooknum,
+                       struct sk_buff **skb,
+                       const struct net_device *in,
+                       const struct net_device *out,
+                       int (*okfn)(struct sk_buff *))
+#endif
 {
     unsigned int magic1 = 0;
     unsigned int magic2 = 0;
     unsigned char * ptr_tcp_header = 0;
     int fix_checksum_flag = 0;
+    int tcplen = 0;
     //printk(KERN_INFO "=== BEGIN HOOK ===\n");
 
     sock_buff = skb;
@@ -69,16 +73,30 @@ unsigned int hook_func(void *priv, struct sk_buff *skb, const struct nf_hook_sta
             iph->daddr = new_ip;
             fix_checksum_flag = 1;
 	}
-        // fix ip header checksum
         if (fix_checksum_flag) {
-            printk(KERN_INFO "%d.%d.%d.%d->%d.%d.%d.%d\n\n", NIPQUAD(iph->saddr), NIPQUAD(iph->daddr));
+            // fix IP header checksum
+            sock_buff->ip_summed = CHECKSUM_NONE; //stop offloading
+            sock_buff->csum_valid = 0;
             iph->check = 0;
-            ip_send_check(iph);
+            iph->check = ip_fast_csum((u8 *)iph, iph->ihl);
+            
+            if(skb_is_nonlinear(sock_buff))
+                skb_linearize(sock_buff); 
+
+            // fix TCP header checksum
+            if (iph->protocol==IPPROTO_TCP) {
+                printk(KERN_INFO "old checksum: %d\n", tcp_header->check);
+                tcp_header = tcp_hdr(sock_buff);
+                sock_buff->csum =0;
+                tcplen = ntohs(iph->tot_len) - iph->ihl*4;
+                tcp_header->check = 0;
+                tcp_header->check = tcp_v4_check(tcplen, iph->saddr, iph->daddr, csum_partial((char *)tcp_header, tcplen, 0));
+                printk(KERN_INFO "new checksum: %d\n", tcp_header->check);
+            }
         }
 
     }
   
-
     if (iph->protocol==IPPROTO_TCP) {
         //printk(KERN_INFO "=== TCP ===\n");
         tcp_header = tcp_hdr(sock_buff);
@@ -122,13 +140,11 @@ unsigned int hook_func(void *priv, struct sk_buff *skb, const struct nf_hook_sta
 }
 
 static int __init initialize(void) {
+    // we must hook before and after routing to capture all packets
     printk(KERN_INFO "installing netfilter\n");
+    // hook POST_ROUTING
     nfho.hook = hook_func;
-    //nfho.hooknum = NF_INET_PRE_ROUTING;
-    //Interesting note: A pre-routing hook may not work here if our Vagrant
-    //                  box does not know how to route to the modified source.
-    //                  For the record, mine did not.
-    nfho.hooknum = NF_INET_PRE_ROUTING;
+    nfho.hooknum = NF_INET_POST_ROUTING;
     nfho.pf = PF_INET;
     nfho.priority = NF_IP_PRI_FIRST;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,13,0)
@@ -136,11 +152,29 @@ static int __init initialize(void) {
 #else
     nf_register_hook(&nfho);
 #endif
+
+    // hook PRE_ROUTING
+    nfho.hooknum = NF_INET_PRE_ROUTING;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,13,0)
+    nf_register_net_hook(&init_net, &nfho);
+#else
+    nf_register_hook(&nfho);
+#endif
+
     return 0;    
 }
 
 static void __exit teardown(void) {
     printk(KERN_INFO "removing netfilter\n");
+    // unhook PRE_ROUTING
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,13,0)
+    nf_unregister_net_hook(&init_net, &nfho);
+#else
+    nf_unregister_hook(&nfho);
+#endif
+
+    // unhook POST_ROUTING
+    nfho.hooknum = NF_INET_POST_ROUTING;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,13,0)
     nf_unregister_net_hook(&init_net, &nfho);
 #else
