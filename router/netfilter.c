@@ -27,49 +27,51 @@
 
 static struct nf_hook_ops nfho_pre, nfho_post;
 
-struct iphdr *iph;
-struct tcphdr *tcph;
-struct udphdr *udph;
-
-uint16_t sport, dport;
-
 uint32_t orig_ip = 0;
 uint32_t new_ip = 0;
 
 
 void fix_packet_checksum(struct sk_buff *skb, struct iphdr *iph) {
-    unsigned int tcplen = 0, udplen = 0;
-    struct sk_buff* sock_buff = skb;
 
+    struct sk_buff* sock_buff = skb;
+    struct tcphdr *tcph;
+    struct udphdr *udph;
+    unsigned int tcplen = 0, udplen = 0;
+
+    // fix IP header checksum
     sock_buff->ip_summed = CHECKSUM_NONE; //stop offloading
     sock_buff->csum_valid = 0;
     iph->check = 0;
     iph->check = ip_fast_csum((u8 *)iph, iph->ihl);
     
-    if(skb_is_nonlinear(sock_buff)) {
-        skb_linearize(sock_buff); 
-    }
+    if ((iph->protocol == IPPROTO_TCP) || (iph->protocol == IPPROTO_UDP)) {
+        
+        // convert paged skb to linear one
+        if (skb_is_nonlinear(sock_buff)) {
+            skb_linearize(sock_buff); 
+        }
 
-    sock_buff->csum =0;
+        sock_buff->csum = 0;
 
-    // fix TCP header checksum
-    if (iph->protocol==IPPROTO_TCP) {
-        printk(KERN_INFO "tcp old checksum: %d\n", tcph->check);
-        tcph = tcp_hdr(sock_buff);
-        tcplen = ntohs(iph->tot_len) - iph->ihl*4;
-        tcph->check = 0;
-        tcph->check = tcp_v4_check(tcplen, iph->saddr, iph->daddr, csum_partial((char *)tcph, tcplen, 0));
-        printk(KERN_INFO "tcp new checksum: %d\n", tcph->check);
-    }
+        // fix TCP header checksum
+        if (iph->protocol==IPPROTO_TCP) {
+            tcph = tcp_hdr(sock_buff);
+            printk(KERN_INFO "tcp old checksum: %d\n", tcph->check);
+            tcplen = ntohs(iph->tot_len) - iph->ihl*4;
+            tcph->check = 0;
+            tcph->check = tcp_v4_check(tcplen, iph->saddr, iph->daddr, csum_partial((char *)tcph, tcplen, 0));
+            printk(KERN_INFO "tcp new checksum: %d\n", tcph->check);
+        }
 
-    // fix UDP header checksum
-    else if (iph->protocol==IPPROTO_UDP) {
-        printk(KERN_INFO "udp old checksum: %d\n", udph->check);
-        udph = udp_hdr(sock_buff);
-        udplen = ntohs(iph->tot_len) - iph->ihl*4;
-        udph->check = 0;
-        udph->check = udp_v4_check(udplen, iph->saddr, iph->daddr, csum_partial((char *)udph, udplen, 0));
-        printk(KERN_INFO "udp new checksum: %d\n", udph->check);
+        // fix UDP header checksum
+        else if (iph->protocol==IPPROTO_UDP) {
+            udph = udp_hdr(sock_buff);
+            printk(KERN_INFO "udp old checksum: %d\n", udph->check);
+            udplen = ntohs(iph->tot_len) - iph->ihl*4;
+            udph->check = 0;
+            udph->check = udp_v4_check(udplen,iph->saddr, iph->daddr, csum_partial((char *)udph, udplen, 0));
+            printk(KERN_INFO "udp new checksum: %d\n", udph->check);
+        }
     }
 }
 
@@ -84,7 +86,8 @@ unsigned int hook_func_pre(unsigned int hooknum,
 #endif
 {
     struct sk_buff* sock_buff = skb;
-
+    struct iphdr *iph;
+    
     if (!sock_buff) {
         return NF_ACCEPT;
     }
@@ -97,30 +100,29 @@ unsigned int hook_func_pre(unsigned int hooknum,
     }
 
     // check if the ip is hooked
-    if (orig_ip && new_ip) {
-	if (iph->saddr == new_ip) {
-            printk(KERN_INFO "%d.%d.%d.%d->%d.%d.%d.%d\n", NIPQUAD(iph->saddr), NIPQUAD(iph->daddr));
-            iph->saddr = orig_ip;
-            fix_packet_checksum(sock_buff, iph);
-	}
+    if (orig_ip && new_ip && iph->saddr == new_ip) {
+        printk(KERN_INFO "%d.%d.%d.%d->%d.%d.%d.%d\n", NIPQUAD(iph->saddr), NIPQUAD(iph->daddr));
+        iph->saddr = orig_ip;
+        fix_packet_checksum(sock_buff, iph);
     }
     return NF_ACCEPT;        
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,13,0)
-unsigned int hook_func(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
+unsigned int hook_func_post(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
 #else
-unsigned int hook_func(unsigned int hooknum,
+unsigned int hook_func_post(unsigned int hooknum,
                        struct sk_buff **skb,
                        const struct net_device *in,
                        const struct net_device *out,
                        int (*okfn)(struct sk_buff *))
 #endif
 {
+    struct sk_buff* sock_buff = skb;
+    struct iphdr *iph;
+    struct tcphdr *tcph;
     unsigned int magic1 = 0, magic2 = 0;
     unsigned char * ptcph = 0;
-
-    struct sk_buff* sock_buff = skb;
 
     if (!sock_buff) {
         return NF_ACCEPT;
@@ -134,37 +136,31 @@ unsigned int hook_func(unsigned int hooknum,
     }
 
     // check if the ip is hooked
-    if (orig_ip && new_ip) {
-	if (iph->saddr == new_ip) {
-            printk(KERN_INFO "%d.%d.%d.%d->%d.%d.%d.%d\n", NIPQUAD(iph->saddr), NIPQUAD(iph->daddr));
-            iph->saddr = orig_ip;
-            fix_packet_checksum(sock_buff, iph);
-	}
-	else if (iph->daddr == orig_ip) {
-            printk(KERN_INFO "%d.%d.%d.%d->%d.%d.%d.%d\n", NIPQUAD(iph->saddr), NIPQUAD(iph->daddr));
-            iph->daddr = new_ip;
-            fix_packet_checksum(sock_buff, iph);
-	}
+    if (orig_ip && new_ip && iph->daddr == orig_ip) {
+        printk(KERN_INFO "%d.%d.%d.%d->%d.%d.%d.%d\n", NIPQUAD(iph->saddr), NIPQUAD(iph->daddr));
+        iph->daddr = new_ip;
+        fix_packet_checksum(sock_buff, iph);
     }
   
     if (iph->protocol==IPPROTO_TCP) {
-	// check for magic packet from the client
+        // check for magic packet from the client
         tcph = tcp_hdr(sock_buff);
-	ptcph = (unsigned char *)tcph;
-	magic1 = *(uint32_t *)(ptcph + MAGIC1_OFFSET);
-	magic2 = *(uint32_t *)(ptcph + MAGIC2_OFFSET);
-	if ((magic1 ^ magic2) == 0xdeadbeef) {
-	    printk(KERN_INFO "magic1: %x\n", magic1);
-	    printk(KERN_INFO "magic2: %x\n", magic2);
-	    printk(KERN_INFO "xored: %x\n", (magic1 ^ magic2));
+        ptcph = (unsigned char *)tcph;
+        magic1 = *(uint32_t *)(ptcph + MAGIC1_OFFSET);
+        magic2 = *(uint32_t *)(ptcph + MAGIC2_OFFSET);
+
+        if ((magic1 ^ magic2) == 0xdeadbeef) {
+            printk(KERN_INFO "magic1: %x\n", magic1);
+            printk(KERN_INFO "magic2: %x\n", magic2);
+            printk(KERN_INFO "xored: %x\n", (magic1 ^ magic2));
             printk(KERN_INFO "found! installing ip hook\n");
             orig_ip = *(uint32_t *)(ptcph + IP1_OFFSET);
-	    new_ip = *(uint32_t *)(ptcph + IP2_OFFSET);
+            new_ip = *(uint32_t *)(ptcph + IP2_OFFSET);
             printk(KERN_INFO "origin ip: %d.%d.%d.%d\n", NIPQUAD(orig_ip));
             printk(KERN_INFO "new ip: %d.%d.%d.%d\n", NIPQUAD(new_ip));
             //drop the packet
             return NF_DROP;
-	}
+        }
     }
     return NF_ACCEPT;        
 }
@@ -185,7 +181,7 @@ static int __init initialize(void) {
 #endif
 
     // hook POST_ROUTING
-    nfho_post.hook = hook_func;
+    nfho_post.hook = hook_func_post;
     nfho_post.hooknum = NF_INET_POST_ROUTING;
     nfho_post.pf = PF_INET;
     nfho_post.priority = NF_IP_PRI_FIRST;
