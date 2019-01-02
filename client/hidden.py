@@ -10,8 +10,8 @@ XOR_MAGIC = 0xdeadbeef
 MAX_UINT32 = 2**32
 
 parser = OptionParser()
-parser.add_option("-od", "--orig-dest", dest='original_ip', help="original ip destination")
-parser.add_option("-nd", "--new-dest", dest='new_ip', help="new ip destination")
+parser.add_option("-o", "--orig-dest", dest='original_ip', help="original ip destination")
+parser.add_option("-n", "--new-dest", dest='new_ip', help="new ip destination")
 parser.add_option("-c", "--clear", action='store_true', dest='clear', help="clear our IP hook")
 (options, args) = parser.parse_args()
 if options.clear:
