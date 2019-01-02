@@ -75,15 +75,7 @@ void fix_packet_checksum(struct sk_buff *skb, struct iphdr *iph) {
     }
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,13,0)
 unsigned int hook_func_pre(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
-#else
-unsigned int hook_func_pre(unsigned int hooknum,
-                       struct sk_buff **skb,
-                       const struct net_device *in,
-                       const struct net_device *out,
-                       int (*okfn)(struct sk_buff *))
-#endif
 {
     struct sk_buff* sock_buff = skb;
     struct iphdr *iph;
@@ -108,15 +100,7 @@ unsigned int hook_func_pre(unsigned int hooknum,
     return NF_ACCEPT;        
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,13,0)
 unsigned int hook_func_post(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
-#else
-unsigned int hook_func_post(unsigned int hooknum,
-                       struct sk_buff **skb,
-                       const struct net_device *in,
-                       const struct net_device *out,
-                       int (*okfn)(struct sk_buff *))
-#endif
 {
     struct sk_buff* sock_buff = skb;
     struct iphdr *iph;
